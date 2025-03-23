@@ -51,7 +51,6 @@ BoxLayout:
         color: (1, 0, 0, 1)  # Red when OFF
 """
 
-
 class DrowsinessApp(App):
     def build(self):
         self.ui = Builder.load_string(KV)
@@ -60,6 +59,8 @@ class DrowsinessApp(App):
         self.cap = None
         self.eye_start_time = None
         self.tilt_start_time = None
+        
+        self.no_face_start_time = None  # Track time when no face is detected
 
         self.monitoring_switch = self.ui.ids.monitoring_switch
         self.beep_switch = self.ui.ids.beep_switch
@@ -105,66 +106,70 @@ class DrowsinessApp(App):
 
         results = face_mesh.process(frame_rgb)
 
-        if results.multi_face_landmarks:
-            for face_landmarks in results.multi_face_landmarks:
-                height, width, _ = frame.shape
-                landmarks = [(int(l.x * width), int(l.y * height)) for l in face_landmarks.landmark]
+        if not results.multi_face_landmarks:
+            if self.no_face_start_time is None:
+                self.no_face_start_time = time.time()
+            elif time.time() - self.no_face_start_time >= 2.5:
+                self.status_label.text = "ALERT! No Face Detected!"
+                self.status_label.color = (1, 0, 0, 1)
+                if self.beep_enabled:
+                    winsound.Beep(1000, 1000)
+            return
+        else:
+            self.no_face_start_time = None
 
-                LEFT_EYE = [362, 385, 387, 263, 373, 380]
-                RIGHT_EYE = [33, 160, 158, 133, 153, 144]
-                HEAD_TILT_POINTS = [10, 152]
+        for face_landmarks in results.multi_face_landmarks:
+            height, width, _ = frame.shape
+            landmarks = [(int(l.x * width), int(l.y * height)) for l in face_landmarks.landmark]
 
-                def calculate_ear(eye_points, landmarks):
-                    A = np.linalg.norm(np.array(landmarks[eye_points[1]]) - np.array(landmarks[eye_points[5]]))
-                    B = np.linalg.norm(np.array(landmarks[eye_points[2]]) - np.array(landmarks[eye_points[4]]))
-                    C = np.linalg.norm(np.array(landmarks[eye_points[0]]) - np.array(landmarks[eye_points[3]]))
-                    return (A + B) / (2.0 * C)
+            LEFT_EYE = [362, 385, 387, 263, 373, 380]
+            RIGHT_EYE = [33, 160, 158, 133, 153, 144]
+            HEAD_TILT_POINTS = [10, 152]
 
-                left_ear = calculate_ear(LEFT_EYE, landmarks)
-                right_ear = calculate_ear(RIGHT_EYE, landmarks)
-                avg_ear = (left_ear + right_ear) / 2.0
+            def calculate_ear(eye_points, landmarks):
+                A = np.linalg.norm(np.array(landmarks[eye_points[1]]) - np.array(landmarks[eye_points[5]]))
+                B = np.linalg.norm(np.array(landmarks[eye_points[2]]) - np.array(landmarks[eye_points[4]]))
+                C = np.linalg.norm(np.array(landmarks[eye_points[0]]) - np.array(landmarks[eye_points[3]]))
+                return (A + B) / (2.0 * C)
 
-                top_point = landmarks[HEAD_TILT_POINTS[0]]
-                bottom_point = landmarks[HEAD_TILT_POINTS[1]]
-                angle = np.degrees(np.arctan2(bottom_point[0] - top_point[0], bottom_point[1] - top_point[1]))
+            left_ear = calculate_ear(LEFT_EYE, landmarks)
+            right_ear = calculate_ear(RIGHT_EYE, landmarks)
+            avg_ear = (left_ear + right_ear) / 2.0
 
-                DROWSY_THRESHOLD = 0.25
-                TIME_THRESHOLD = 5.0
-                TILT_THRESHOLD = 15
+            top_point = landmarks[HEAD_TILT_POINTS[0]]
+            bottom_point = landmarks[HEAD_TILT_POINTS[1]]
+            angle = np.degrees(np.arctan2(bottom_point[0] - top_point[0], bottom_point[1] - top_point[1]))
 
-                is_drowsy = False
+            DROWSY_THRESHOLD = 0.25
+            TIME_THRESHOLD = 2.5
+            TILT_THRESHOLD = 15
 
-                if avg_ear < DROWSY_THRESHOLD:
-                    if self.eye_start_time is None:
-                        self.eye_start_time = time.time()
-                    elapsed_eye_time = time.time() - self.eye_start_time
+            is_drowsy = False
 
-                    if elapsed_eye_time >= TIME_THRESHOLD:
-                        is_drowsy = True
+            if avg_ear < DROWSY_THRESHOLD:
+                if self.eye_start_time is None:
+                    self.eye_start_time = time.time()
+                elif time.time() - self.eye_start_time >= TIME_THRESHOLD:
+                    is_drowsy = True
+            else:
+                self.eye_start_time = None
 
-                else:
-                    self.eye_start_time = None
+            if abs(angle) > TILT_THRESHOLD:
+                if self.tilt_start_time is None:
+                    self.tilt_start_time = time.time()
+                elif time.time() - self.tilt_start_time >= TIME_THRESHOLD:
+                    is_drowsy = True
+            else:
+                self.tilt_start_time = None
 
-                if abs(angle) > TILT_THRESHOLD:
-                    if self.tilt_start_time is None:
-                        self.tilt_start_time = time.time()
-                    elapsed_tilt_time = time.time() - self.tilt_start_time
-
-                    if elapsed_tilt_time >= TIME_THRESHOLD:
-                        is_drowsy = True
-
-                else:
-                    self.tilt_start_time = None
-
-                if is_drowsy:
-                    self.status_label.text = "ALERT! Drowsiness Detected!"
-                    self.status_label.color = (1, 0, 0, 1)
-                    if self.beep_enabled:
-                        winsound.Beep(1000, 1000)
-                else:
-                    self.status_label.text = "Monitoring is ON"
-                    self.status_label.color = (0, 1, 0, 1)
-
+            if is_drowsy:
+                self.status_label.text = "ALERT! Drowsiness Detected!"
+                self.status_label.color = (1, 0, 0, 1)
+                if self.beep_enabled:
+                    winsound.Beep(1000, 1000)
+            else:
+                self.status_label.text = "Monitoring is ON"
+                self.status_label.color = (0, 1, 0, 1)
 
 if __name__ == "__main__":
     DrowsinessApp().run()
