@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Drowsiness Monitoring</title>
+</head>
+<body>
+    <h2>Welcome, {{ session['username'] }}!</h2>
+    <p>Drowsiness monitoring is running...</p>
+
+    <!-- Display Live Video Stream -->
+    <img src="{{ url_for('video_feed') }}" width="640" height="480">
+
+    <br><br>
+    <a href="/logout">Logout</a>
+</body>
+</html>
